@@ -3,11 +3,15 @@
 name: Secure Video Compression
 
 on:
-  # This allows us to trigger the workflow manually with inputs
   workflow_dispatch:
     inputs:
-      upload_url:
-        description: 'URL of the encrypted video file from transfer.sh'
+      # NEW: We now accept a release tag instead of a direct URL.
+      release_tag:
+        description: 'The temporary git tag for the release containing the encrypted file.'
+        required: true
+      # NEW: We accept the encrypted original filename.
+      encrypted_original_filename:
+        description: 'The GPG-encrypted original filename.'
         required: true
       ffmpeg_options:
         description: 'JSON string of ffmpeg settings'
@@ -18,52 +22,57 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Check out the repository code so we can use our scripts
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Step 2: Set up Python environment
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      # Step 3: Install runner dependencies (ffmpeg for processing)
       - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
-      # Step 4: Import GPG Keys from Secrets
-      # This is a critical security step. It makes the keys available to the runner.
       - name: Import GPG Keys
         run: |
           echo "Importing GPG keys..."
-          # Import the private key needed to decrypt the uploaded file
           echo "${{ secrets.GPG_ACTION_PRIVATE_KEY }}" | gpg --batch --import
-          # Import the user's public key to encrypt the final result
           echo "${{ secrets.USER_GPG_PUBLIC_KEY }}" | gpg --batch --import
           echo "Key import complete."
-          gpg --list-keys # For debugging, shows which keys were imported
+          gpg --list-keys
 
-      # Step 5: Download the encrypted file from the URL provided
-      - name: Download Encrypted File
+      # NEW: Download step now uses `gh release download`.
+      - name: Download Encrypted Asset from Release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          echo "Downloading from ${{ github.event.inputs.upload_url }}"
-          curl --fail -L -o video.gpg "${{ github.event.inputs.upload_url }}"
+          echo "Downloading asset from release tag: ${{ github.event.inputs.release_tag }}"
+          gh release download "${{ github.event.inputs.release_tag }}" --clobber
+          # Rename the downloaded file (which has a random name) to a predictable one.
+          mv asset-*.gpg video.gpg
           echo "Download complete."
 
-      # Step 6: Decrypt the video using the Action's private key
+      # NEW: Decrypt the original filename passed from the client script.
+      - name: Decrypt Original Filename
+        id: decrypt_name
+        run: |
+          echo "Decrypting original filename..."
+          DECRYPTED_NAME=$(echo "${{ github.event.inputs.encrypted_original_filename }}" | gpg --quiet --batch --decrypt)
+          # Use string manipulation to get just the filename without extension
+          FILENAME_BASE="${DECRYPTED_NAME%.*}"
+          echo "Decrypted base name: $FILENAME_BASE"
+          # Set for use in other steps
+          echo "DECRYPTED_FILENAME_BASE=${FILENAME_BASE}" >> $GITHUB_ENV
+          
       - name: Decrypt Video
         run: |
           echo "Decrypting video.gpg..."
-          # The passphrase for the private key is also a secret
           gpg --quiet --batch --yes --decrypt --passphrase "${{ secrets.GPG_ACTION_PASSPHRASE }}" \
               --output decrypted_video.mp4 video.gpg
           echo "Decryption complete."
 
-      # Step 7: Run the compression script
-      # This calls our Python script and passes the JSON settings
       - name: Run FFmpeg Compression
         run: |
           python3 action_compress.py \
@@ -71,7 +80,6 @@ jobs:
             "compressed_video.mp4" \
             '${{ github.event.inputs.ffmpeg_options }}'
 
-      # Step 8: Encrypt the compressed result for the user
       - name: Encrypt Result for User
         run: |
           echo "Encrypting result for user..."
@@ -79,10 +87,10 @@ jobs:
               --output compressed_video.mp4.gpg compressed_video.mp4
           echo "Encryption of result complete."
 
-      # Step 9: Upload the final encrypted file as a downloadable artifact
+      # MODIFIED: Artifact name is now dynamic for easier identification.
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: compressed-video # This name must match the download step in our local script
+          name: compressed-video-for-${{ env.DECRYPTED_FILENAME_BASE }}
           path: compressed_video.mp4.gpg
-          retention-days: 1 # Delete the artifact after 1 day for privacy
+          retention-days: 1
