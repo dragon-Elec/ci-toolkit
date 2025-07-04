@@ -1,0 +1,115 @@
+# .github/workflows/main.yml
+
+name: Secure Video Compression
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'The temporary git tag for the release containing the encrypted file.'
+        required: true
+      original_filename:
+        description: 'The plain-text original filename (e.g., my_video.mp4).'
+        required: true
+      ffmpeg_options:
+        description: 'JSON string of ffmpeg settings'
+        required: true
+
+jobs:
+  compress-video:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg jq # Added jq for parsing
+
+      - name: Import GPG Keys
+        env:
+          GPG_ACTION_PRIVATE_KEY: ${{ secrets.GPG_ACTION_PRIVATE_KEY }}
+          USER_GPG_PUBLIC_KEY: ${{ secrets.USER_GPG_PUBLIC_KEY }}
+        run: |
+          echo "Importing GPG keys..."
+          echo "$GPG_ACTION_PRIVATE_KEY" | gpg --batch --import
+          echo "$USER_GPG_PUBLIC_KEY" | gpg --batch --import
+          echo "Key import complete."
+          gpg --list-keys
+
+      - name: Download Encrypted Asset from Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Downloading asset from release tag: ${{ github.event.inputs.release_tag }}"
+          # Find the asset (we don't know the random name) and download it to a known name.
+          gh release download "${{ github.event.inputs.release_tag }}" --pattern "*.gpg" --output video.gpg
+          echo "Download complete."
+
+      - name: Decrypt Video
+        env:
+          GPG_ACTION_PASSPHRASE: ${{ secrets.GPG_ACTION_PASSPHRASE }}
+        run: |
+          echo "Decrypting video.gpg..."
+          gpg --quiet --batch --yes --decrypt --passphrase "$GPG_ACTION_PASSPHRASE" \
+              --output decrypted_video.mp4 video.gpg
+          echo "Decryption complete."
+
+      - name: Run FFmpeg Compression
+        id: ffmpeg
+        run: |
+          echo "Parsing FFmpeg options..."
+          OPTS='${{ github.event.inputs.ffmpeg_options }}'
+          
+          # Use JQ to safely extract parameters from the JSON input
+          VIDEO_ENCODER=$(echo $OPTS | jq -r '.video_encoder')
+          CRF=$(echo $OPTS | jq -r '.crf')
+          PRESET=$(echo $OPTS | jq -r '.preset')
+          AUDIO_ENCODER=$(echo $OPTS | jq -r '.audio_encoder')
+          PRESERVE_METADATA=$(echo $OPTS | jq -r '.preserve_metadata')
+
+          # Build the metadata flag
+          METADATA_FLAG=""
+          if [[ "$PRESERVE_METADATA" == "Yes" ]]; then
+            METADATA_FLAG="-map_metadata 0"
+          fi
+
+          echo "Starting FFmpeg..."
+          ffmpeg -i decrypted_video.mp4 \
+            -c:v "$VIDEO_ENCODER" \
+            -crf "$CRF" \
+            -preset "$PRESET" \
+            -c:a "$AUDIO_ENCODER" \
+            $METADATA_FLAG \
+            compressed_video.mp4
+          echo "Compression finished."
+          
+      - name: Encrypt Result for User
+        env:
+          USER_GPG_RECIPIENT_ID: ${{ secrets.USER_GPG_RECIPIENT_ID }}
+        run: |
+          echo "Encrypting result for user..."
+          gpg --quiet --batch --yes --encrypt --recipient "$USER_GPG_RECIPIENT_ID" --trust-model always \
+              --output compressed_video.mp4.gpg compressed_video.mp4
+          echo "Encryption of result complete."
+
+      # Prepares the artifact name using valid shell commands
+      - name: Prepare Artifact Name
+        id: prep_artifact
+        run: |
+          FILENAME="${{ github.event.inputs.original_filename }}"
+          # Use shell parameter expansion to remove the extension
+          FILENAME_BASE="${FILENAME%.*}"
+          # Save the result to a workflow environment variable
+          echo "ARTIFACT_NAME=compressed-${FILENAME_BASE}" >> $GITHUB_ENV
+
+      # Uploads the artifact using the correctly prepared name
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          # Use the environment variable set in the previous step
+          name: ${{ env.ARTIFACT_NAME }}
+          path: compressed_video.mp4.gpg
+          retention-days: 1
