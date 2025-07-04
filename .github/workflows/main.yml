@@ -5,13 +5,11 @@ name: Secure Video Compression
 on:
   workflow_dispatch:
     inputs:
-      # NEW: We now accept a release tag instead of a direct URL.
       release_tag:
         description: 'The temporary git tag for the release containing the encrypted file.'
         required: true
-      # NEW: We accept the encrypted original filename.
-      encrypted_original_filename:
-        description: 'The GPG-encrypted original filename.'
+      original_filename:
+        description: 'The plain-text original filename (e.g., my_video.mp4).'
         required: true
       ffmpeg_options:
         description: 'JSON string of ffmpeg settings'
@@ -25,72 +23,82 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg jq # Added jq for parsing
 
       - name: Import GPG Keys
+        env:
+          GPG_ACTION_PRIVATE_KEY: ${{ secrets.GPG_ACTION_PRIVATE_KEY }}
+          USER_GPG_PUBLIC_KEY: ${{ secrets.USER_GPG_PUBLIC_KEY }}
         run: |
           echo "Importing GPG keys..."
-          echo "${{ secrets.GPG_ACTION_PRIVATE_KEY }}" | gpg --batch --import
-          echo "${{ secrets.USER_GPG_PUBLIC_KEY }}" | gpg --batch --import
+          echo "$GPG_ACTION_PRIVATE_KEY" | gpg --batch --import
+          echo "$USER_GPG_PUBLIC_KEY" | gpg --batch --import
           echo "Key import complete."
           gpg --list-keys
 
-      # NEW: Download step now uses `gh release download`.
       - name: Download Encrypted Asset from Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "Downloading asset from release tag: ${{ github.event.inputs.release_tag }}"
-          gh release download "${{ github.event.inputs.release_tag }}" --clobber
-          # Rename the downloaded file (which has a random name) to a predictable one.
-          mv asset-*.gpg video.gpg
+          # Find the asset (we don't know the random name) and download it to a known name.
+          gh release download "${{ github.event.inputs.release_tag }}" --pattern "*.gpg" --output video.gpg
           echo "Download complete."
 
-      # NEW: Decrypt the original filename passed from the client script.
-      - name: Decrypt Original Filename
-        id: decrypt_name
-        run: |
-          echo "Decrypting original filename..."
-          DECRYPTED_NAME=$(echo "${{ github.event.inputs.encrypted_original_filename }}" | gpg --quiet --batch --decrypt)
-          # Use string manipulation to get just the filename without extension
-          FILENAME_BASE="${DECRYPTED_NAME%.*}"
-          echo "Decrypted base name: $FILENAME_BASE"
-          # Set for use in other steps
-          echo "DECRYPTED_FILENAME_BASE=${FILENAME_BASE}" >> $GITHUB_ENV
-          
       - name: Decrypt Video
+        env:
+          GPG_ACTION_PASSPHRASE: ${{ secrets.GPG_ACTION_PASSPHRASE }}
         run: |
           echo "Decrypting video.gpg..."
-          gpg --quiet --batch --yes --decrypt --passphrase "${{ secrets.GPG_ACTION_PASSPHRASE }}" \
+          gpg --quiet --batch --yes --decrypt --passphrase "$GPG_ACTION_PASSPHRASE" \
               --output decrypted_video.mp4 video.gpg
           echo "Decryption complete."
 
       - name: Run FFmpeg Compression
+        id: ffmpeg
         run: |
-          python3 action_compress.py \
-            "decrypted_video.mp4" \
-            "compressed_video.mp4" \
-            '${{ github.event.inputs.ffmpeg_options }}'
+          echo "Parsing FFmpeg options..."
+          OPTS='${{ github.event.inputs.ffmpeg_options }}'
+          
+          # Use JQ to safely extract parameters from the JSON input
+          VIDEO_ENCODER=$(echo $OPTS | jq -r '.video_encoder')
+          CRF=$(echo $OPTS | jq -r '.crf')
+          PRESET=$(echo $OPTS | jq -r '.preset')
+          AUDIO_ENCODER=$(echo $OPTS | jq -r '.audio_encoder')
+          PRESERVE_METADATA=$(echo $OPTS | jq -r '.preserve_metadata')
 
+          # Build the metadata flag
+          METADATA_FLAG=""
+          if [[ "$PRESERVE_METADATA" == "Yes" ]]; then
+            METADATA_FLAG="-map_metadata 0"
+          fi
+
+          echo "Starting FFmpeg..."
+          ffmpeg -i decrypted_video.mp4 \
+            -c:v "$VIDEO_ENCODER" \
+            -crf "$CRF" \
+            -preset "$PRESET" \
+            -c:a "$AUDIO_ENCODER" \
+            $METADATA_FLAG \
+            compressed_video.mp4
+          echo "Compression finished."
+          
       - name: Encrypt Result for User
+        env:
+          USER_GPG_RECIPIENT_ID: ${{ secrets.USER_GPG_RECIPIENT_ID }}
         run: |
           echo "Encrypting result for user..."
-          gpg --quiet --batch --yes --encrypt --recipient "${{ secrets.USER_GPG_RECIPIENT_ID }}" --trust-model always \
+          gpg --quiet --batch --yes --encrypt --recipient "$USER_GPG_RECIPIENT_ID" --trust-model always \
               --output compressed_video.mp4.gpg compressed_video.mp4
           echo "Encryption of result complete."
 
-      # MODIFIED: Artifact name is now dynamic for easier identification.
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: compressed-video-for-${{ env.DECRYPTED_FILENAME_BASE }}
+          # Create a more predictable artifact name based on the original filename
+          name: compressed-${{ github.event.inputs.original_filename %.mp4 }}
           path: compressed_video.mp4.gpg
           retention-days: 1
