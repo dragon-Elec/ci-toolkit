@@ -53,7 +53,8 @@ jobs:
           GPG_ACTION_PASSPHRASE: ${{ secrets.GPG_ACTION_PASSPHRASE }}
         run: |
           echo "Decrypting video.gpg..."
-          gpg --quiet --batch --yes --decrypt --passphrase "$GPG_ACTION_PASSPHRASE" \
+          # Add --pinentry-mode loopback to prevent GPG from needing a TTY.
+          gpg --quiet --batch --yes --pinentry-mode loopback --decrypt --passphrase "$GPG_ACTION_PASSPHRASE" \
               --output decrypted_video.mp4 video.gpg
           echo "Decryption complete."
 
