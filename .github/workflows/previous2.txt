@@ -1,0 +1,96 @@
+# .github/workflows/main.yml
+
+name: Secure Video Compression
+
+on:
+  workflow_dispatch:
+    inputs:
+      # NEW: We now accept a release tag instead of a direct URL.
+      release_tag:
+        description: 'The temporary git tag for the release containing the encrypted file.'
+        required: true
+      # NEW: We accept the encrypted original filename.
+      encrypted_original_filename:
+        description: 'The GPG-encrypted original filename.'
+        required: true
+      ffmpeg_options:
+        description: 'JSON string of ffmpeg settings'
+        required: true
+
+jobs:
+  compress-video:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Import GPG Keys
+        run: |
+          echo "Importing GPG keys..."
+          echo "${{ secrets.GPG_ACTION_PRIVATE_KEY }}" | gpg --batch --import
+          echo "${{ secrets.USER_GPG_PUBLIC_KEY }}" | gpg --batch --import
+          echo "Key import complete."
+          gpg --list-keys
+
+      # NEW: Download step now uses `gh release download`.
+      - name: Download Encrypted Asset from Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Downloading asset from release tag: ${{ github.event.inputs.release_tag }}"
+          gh release download "${{ github.event.inputs.release_tag }}" --clobber
+          # Rename the downloaded file (which has a random name) to a predictable one.
+          mv asset-*.gpg video.gpg
+          echo "Download complete."
+
+      # NEW: Decrypt the original filename passed from the client script.
+      - name: Decrypt Original Filename
+        id: decrypt_name
+        run: |
+          echo "Decrypting original filename..."
+          DECRYPTED_NAME=$(echo "${{ github.event.inputs.encrypted_original_filename }}" | gpg --quiet --batch --decrypt)
+          # Use string manipulation to get just the filename without extension
+          FILENAME_BASE="${DECRYPTED_NAME%.*}"
+          echo "Decrypted base name: $FILENAME_BASE"
+          # Set for use in other steps
+          echo "DECRYPTED_FILENAME_BASE=${FILENAME_BASE}" >> $GITHUB_ENV
+          
+      - name: Decrypt Video
+        run: |
+          echo "Decrypting video.gpg..."
+          gpg --quiet --batch --yes --decrypt --passphrase "${{ secrets.GPG_ACTION_PASSPHRASE }}" \
+              --output decrypted_video.mp4 video.gpg
+          echo "Decryption complete."
+
+      - name: Run FFmpeg Compression
+        run: |
+          python3 action_compress.py \
+            "decrypted_video.mp4" \
+            "compressed_video.mp4" \
+            '${{ github.event.inputs.ffmpeg_options }}'
+
+      - name: Encrypt Result for User
+        run: |
+          echo "Encrypting result for user..."
+          gpg --quiet --batch --yes --encrypt --recipient "${{ secrets.USER_GPG_RECIPIENT_ID }}" --trust-model always \
+              --output compressed_video.mp4.gpg compressed_video.mp4
+          echo "Encryption of result complete."
+
+      # MODIFIED: Artifact name is now dynamic for easier identification.
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: compressed-video-for-${{ env.DECRYPTED_FILENAME_BASE }}
+          path: compressed_video.mp4.gpg
+          retention-days: 1
