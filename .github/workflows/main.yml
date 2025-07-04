@@ -95,10 +95,21 @@ jobs:
               --output compressed_video.mp4.gpg compressed_video.mp4
           echo "Encryption of result complete."
 
+      # Prepares the artifact name using valid shell commands
+      - name: Prepare Artifact Name
+        id: prep_artifact
+        run: |
+          FILENAME="${{ github.event.inputs.original_filename }}"
+          # Use shell parameter expansion to remove the extension
+          FILENAME_BASE="${FILENAME%.*}"
+          # Save the result to a workflow environment variable
+          echo "ARTIFACT_NAME=compressed-${FILENAME_BASE}" >> $GITHUB_ENV
+
+      # Uploads the artifact using the correctly prepared name
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          # Create a more predictable artifact name based on the original filename
-          name: compressed-${{ github.event.inputs.original_filename %.mp4 }}
+          # Use the environment variable set in the previous step
+          name: ${{ env.ARTIFACT_NAME }}
           path: compressed_video.mp4.gpg
           retention-days: 1
