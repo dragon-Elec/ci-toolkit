@@ -78,7 +78,7 @@ jobs:
       
       - name: "4. Decrypt Input File"
         env:
-          ACTION_GPG_PASSPHRASE: ${{ secrets.ACTION_GPG_PASSPHRASE }}
+          ACTION_GPG_PASSPHRASE: ${{ secrets.GPG_ACTION_PASSPHRASE }}
         run: |
           echo "-> Decrypting 'encrypted_input.gpg' to 'decrypted_video.mp4'..."
           gpg --quiet --batch --yes --pinentry-mode loopback --decrypt --passphrase "$ACTION_GPG_PASSPHRASE" \
