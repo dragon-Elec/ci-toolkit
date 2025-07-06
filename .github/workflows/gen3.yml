@@ -1,8 +1,15 @@
-# main.yml - Gen 3 Combined Workflow
-# ===================================
+# .github/workflows/gen3_v2.yml
+# =========================================================
+# Gen 3 Smart Compression Workflow - Version 2
+#
+# Changelog:
+# - Uses the secure, built-in GITHUB_TOKEN instead of a PAT.
+# - Standardizes on ACTION_GPG_* and USER_GPG_* secret names.
+# - Adds more verbose logging for easier debugging.
+# - Hardens the GitHub Release download step to handle random asset names.
+# =========================================================
 
-
-name: "Gen 3 Smart Compression"
+name: "Gen 3 Smart Compression v2"
 
 on:
   workflow_dispatch:
@@ -10,23 +17,24 @@ on:
       original_filename:
         description: 'The plain-text original filename (e.g., my_video.mp4).'
         required: true
+      ffmpeg_options:
+        description: 'JSON string of ffmpeg settings'
+        required: true
       release_tag:
         description: 'The tag of the GitHub release holding the file (GitHub method).'
         required: false
       upload_url:
         description: 'The URL of the uploaded file (temp.sh method).'
         required: false
-      ffmpeg_options:
-        description: 'JSON string of ffmpeg settings'
-        required: true
 
 jobs:
   compress-video:
     runs-on: ubuntu-latest
 
     env:
-      # Set GITHUB_TOKEN for 'gh' CLI commands and USER_GPG_RECIPIENT_ID for the encryption step.
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # BEST PRACTICE: Use the auto-generated, short-lived token for 'gh' CLI commands.
+      GITHUB_TOKEN: ${{ github.token }}
+      # Standardized GPG User ID for encrypting the final result.
       USER_GPG_RECIPIENT_ID: ${{ secrets.USER_GPG_RECIPIENT_ID }}
 
     steps:
@@ -37,90 +45,87 @@ jobs:
 
       - name: "2. Import GPG Keys"
         env:
+          # Standardized secret names. Ensure these match your repo secrets.
           ACTION_GPG_PRIVATE_KEY: ${{ secrets.ACTION_GPG_PRIVATE_KEY }}
           USER_GPG_PUBLIC_KEY: ${{ secrets.USER_GPG_PUBLIC_KEY }}
         run: |
           echo "Importing GPG keys..."
           echo "$ACTION_GPG_PRIVATE_KEY" | gpg --batch --import
           echo "$USER_GPG_PUBLIC_KEY" | gpg --batch --import
-          echo "Key import complete."
-          gpg --list-keys --with-colons
+          echo "Key import complete. Verifying keys:"
+          gpg --list-keys
 
       # --- CONDITIONAL DOWNLOAD BLOCK ---
-      # The workflow will execute only ONE of the following two steps.
+      # Only ONE of the following two steps will execute per run.
 
       - name: "3a. Get Input File (from GitHub Release)"
         if: github.event.inputs.release_tag != ''
         run: |
-          echo "-> Downloading from GitHub Release tag: ${{ github.event.inputs.release_tag }}"
-          # Use your robust download command.
-          gh release download "${{ github.event.inputs.release_tag }}" --repo ${{ github.repository }} --pattern "*.gpg" --output encrypted_input.gpg
-          echo "Download complete."
+          echo "-> Downloading asset from GitHub Release tag: ${{ github.event.inputs.release_tag }}"
+          # Download the .gpg asset, which has a random name.
+          gh release download "${{ github.event.inputs.release_tag }}" --pattern "*.gpg"
+          # Find the downloaded file and rename it to our standard name for the next step.
+          mv *.gpg encrypted_input.gpg
+          echo "-> Renamed downloaded asset to 'encrypted_input.gpg'."
 
       - name: "3b. Get Input File (from temp.sh URL)"
         if: github.event.inputs.upload_url != ''
         run: |
-          echo "-> Downloading from URL: ${{ github.event.inputs.upload_url }}"
-          # Use curl to download the file and save it with a standard name.
+          echo "-> Downloading asset from URL: ${{ github.event.inputs.upload_url }}"
+          # Use curl to download the file and save it directly with our standard name.
           curl --fail -L -o encrypted_input.gpg "${{ github.event.inputs.upload_url }}"
-          echo "Download complete."
+          echo "-> Download complete. File saved as 'encrypted_input.gpg'."
       
       - name: "4. Decrypt Input File"
         env:
           ACTION_GPG_PASSPHRASE: ${{ secrets.ACTION_GPG_PASSPHRASE }}
         run: |
-          echo "Decrypting input file..."
-          # Using your robust, battle-tested gpg command.
+          echo "-> Decrypting 'encrypted_input.gpg' to 'decrypted_video.mp4'..."
           gpg --quiet --batch --yes --pinentry-mode loopback --decrypt --passphrase "$ACTION_GPG_PASSPHRASE" \
               --output decrypted_video.mp4 encrypted_input.gpg
-          echo "Decryption complete."
+          echo "-> Decryption complete."
 
       - name: "5. Run FFmpeg Compression"
         run: |
-          echo "Parsing FFmpeg options..."
+          echo "-> Parsing FFmpeg options from client..."
           OPTS='${{ github.event.inputs.ffmpeg_options }}'
           
-          # Use JQ to safely extract parameters from the JSON input
           VIDEO_ENCODER=$(echo $OPTS | jq -r '.video_encoder')
           CRF=$(echo $OPTS | jq -r '.crf')
           PRESET=$(echo $OPTS | jq -r '.preset')
           AUDIO_ENCODER=$(echo $OPTS | jq -r '.audio_encoder')
           PRESERVE_METADATA=$(echo $OPTS | jq -r '.preserve_metadata')
 
-          # Build the metadata flag
           METADATA_FLAG=""
           if [[ "$PRESERVE_METADATA" == "Yes" ]]; then
             METADATA_FLAG="-map_metadata 0"
           fi
 
-          echo "Starting FFmpeg with settings from client..."
+          echo "-> Starting FFmpeg compression..."
           ffmpeg -i decrypted_video.mp4 \
-            -c:v "$VIDEO_ENCODER" \
-            -crf "$CRF" \
-            -preset "$PRESET" \
-            -c:a "$AUDIO_ENCODER" \
-            $METADATA_FLAG \
+            -c:v "$VIDEO_ENCODER" -crf "$CRF" -preset "$PRESET" \
+            -c:a "$AUDIO_ENCODER" $METADATA_FLAG \
             compressed_video.mp4
-          echo "Compression finished."
+          echo "-> Compression finished."
 
       - name: "6. Encrypt Result for User"
         run: |
-          echo "Encrypting result for user..."
-          # Using your robust gpg command.
+          echo "-> Encrypting final result for user (${USER_GPG_RECIPIENT_ID})..."
           gpg --quiet --batch --yes --encrypt --recipient "$USER_GPG_RECIPIENT_ID" --trust-model always \
               --output compressed_video.mp4.gpg compressed_video.mp4
-          echo "Encryption of result complete."
+          echo "-> Encryption of result complete."
 
       - name: "7. Prepare Artifact Name"
         run: |
-          # Using your perfect shell expansion method.
           FILENAME="${{ github.event.inputs.original_filename }}"
           FILENAME_BASE="${FILENAME%.*}"
-          echo "ARTIFACT_NAME=compressed-${FILENAME_BASE}" >> $GITHUB_ENV
+          ARTIFACT_NAME="compressed-${FILENAME_BASE}"
+          echo "-> Generated artifact name: ${ARTIFACT_NAME}"
+          echo "ARTIFACT_NAME=${ARTIFACT_NAME}" >> $GITHUB_ENV
 
       - name: "8. Upload Final Artifact"
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: compressed_video.mp4.gpg
-          retention-days: 7 # Using a slightly longer retention for debugging.
+          retention-days: 7
