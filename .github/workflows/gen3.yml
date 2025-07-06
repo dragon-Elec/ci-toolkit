@@ -1,13 +1,5 @@
 # .github/workflows/gen3_v2.yml
 # =========================================================
-# Gen 3 Smart Compression Workflow - Version 2
-#
-# Changelog:
-# - Uses the secure, built-in GITHUB_TOKEN instead of a PAT.
-# - Standardizes on ACTION_GPG_* and USER_GPG_* secret names.
-# - Adds more verbose logging for easier debugging.
-# - Hardens the GitHub Release download step to handle random asset names.
-# =========================================================
 
 name: "Gen 3 Smart Compression v2"
 
@@ -38,6 +30,9 @@ jobs:
       USER_GPG_RECIPIENT_ID: ${{ secrets.USER_GPG_RECIPIENT_ID }}
 
     steps:
+      - name: "Checkout repository"
+        uses: actions/checkout@v4
+
       - name: "1. Install Dependencies"
         run: |
           sudo apt-get update
