@@ -46,7 +46,7 @@ jobs:
       - name: "2. Import GPG Keys"
         env:
           # Standardized secret names. Ensure these match your repo secrets.
-          ACTION_GPG_PRIVATE_KEY: ${{ secrets.ACTION_GPG_PRIVATE_KEY }}
+          ACTION_GPG_PRIVATE_KEY: ${{ secrets.GPG_ACTION_PRIVATE_KEY }}
           USER_GPG_PUBLIC_KEY: ${{ secrets.USER_GPG_PUBLIC_KEY }}
         run: |
           echo "Importing GPG keys..."
