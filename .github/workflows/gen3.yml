@@ -1,7 +1,7 @@
-# .github/workflows/gen3_v2.yml
+# .github/workflows/gen3_v3.yml
 # =========================================================
 
-name: "Gen 3 Smart Compression v3"
+name: "Gen 3"
 
 on:
   workflow_dispatch:
