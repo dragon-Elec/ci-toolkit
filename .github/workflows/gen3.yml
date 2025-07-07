@@ -1,14 +1,11 @@
 # .github/workflows/gen3_v2.yml
 # =========================================================
 
-name: "Gen 3 Smart Compression v2"
+name: "Gen 3 Smart Compression v3"
 
 on:
   workflow_dispatch:
     inputs:
-      original_filename:
-        description: 'The plain-text original filename (e.g., my_video.mp4).'
-        required: true
       ffmpeg_options:
         description: 'JSON string of ffmpeg settings'
         required: true
@@ -110,17 +107,9 @@ jobs:
               --output compressed_video.mp4.gpg compressed_video.mp4
           echo "-> Encryption of result complete."
 
-      - name: "7. Prepare Artifact Name"
-        run: |
-          FILENAME="${{ github.event.inputs.original_filename }}"
-          FILENAME_BASE="${FILENAME%.*}"
-          ARTIFACT_NAME="compressed-${FILENAME_BASE}"
-          echo "-> Generated artifact name: ${ARTIFACT_NAME}"
-          echo "ARTIFACT_NAME=${ARTIFACT_NAME}" >> $GITHUB_ENV
-
-      - name: "8. Upload Final Artifact"
+      - name: "7. Upload Final Artifact"
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ARTIFACT_NAME }}
+          name: compressed-output
           path: compressed_video.mp4.gpg
           retention-days: 7
