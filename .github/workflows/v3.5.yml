@@ -21,7 +21,7 @@ on:
 
 jobs:
   compress-video:
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest
 
     env:
       # BEST PRACTICE: Use the auto-generated, short-lived token for 'gh' CLI commands.
