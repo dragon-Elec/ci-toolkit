@@ -64,8 +64,14 @@ jobs:
           echo "Installing FFmpeg to /usr/local/bin/"
           sudo mv ./bin/ffmpeg ./bin/ffprobe /usr/local/bin/
           
-      - name: "2a. Verify FFmpeg and SVT-AV1 Versions"
-        run: ffmpeg -version
+      - name: "2A. Verify FFmpeg and SVT-AV1 Versions"
+        run: |
+          echo "--- Full FFmpeg Version ---"
+          ffmpeg -version
+          
+          echo
+          echo "--- Specific SVT-AV1 Library Version ---"
+          ffmpeg -version 2>&1 | grep 'libsvtav1'
 
       - name: "3. Import GPG Keys"
         env:
