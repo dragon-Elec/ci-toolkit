@@ -1,7 +1,7 @@
 # .github/workflows/arm37.yml
 # =========================================================
 
-name: "Gen 3"
+name: "Gen 3.7"
 
 on:
   workflow_dispatch:
