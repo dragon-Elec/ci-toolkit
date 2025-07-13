@@ -124,12 +124,8 @@ jobs:
           CRF=$(echo $OPTS | jq -r '.crf')
           PRESET=$(echo $OPTS | jq -r '.preset')
           AUDIO_ENCODER=$(echo $OPTS | jq -r '.audio_encoder')
-          PRESERVE_METADATA=$(echo $OPTS | jq -r '.preserve_metadata')
-
-          METADATA_FLAG=""
-          if [[ "$PRESERVE_METADATA" == "Yes" ]]; then
-            METADATA_FLAG="-map_metadata 0"
-          fi
+          # This line now directly pulls the flags from the JSON payload.
+          METADATA_FLAGS=$(echo $OPTS | jq -r '.metadata_flags')
           
           # Define the final unique filename from the client input.
           FINAL_ENCRYPTED_FILENAME="${{ github.event.inputs.output_filename_base }}.gpg"
@@ -137,11 +133,11 @@ jobs:
           echo "-> Starting FFmpeg compression and piping directly to GPG for encryption..."
           echo "-> Final output will be named: '$FINAL_ENCRYPTED_FILENAME'"
           
-          # This is the core of the improved logic:
-          # ffmpeg outputs to stdout ('-'), which is piped directly to gpg's stdin.
+          # The METADATA_FLAGS variable is now used directly.
+          # Note: We don't quote $METADATA_FLAGS so that the shell treats it as multiple arguments.
           ffmpeg -i decrypted_video.mp4 \
             -c:v "$VIDEO_ENCODER" -crf "$CRF" -preset "$PRESET" \
-            -c:a "$AUDIO_ENCODER" $METADATA_FLAG \
+            -c:a "$AUDIO_ENCODER" $METADATA_FLAGS \
             -f matroska - \
           | gpg --quiet --batch --yes --encrypt --recipient "$USER_GPG_RECIPIENT_ID" --trust-model always \
               --output "$FINAL_ENCRYPTED_FILENAME"
