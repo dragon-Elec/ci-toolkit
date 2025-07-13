@@ -138,7 +138,7 @@ jobs:
           ffmpeg -i decrypted_video.mp4 \
             -c:v "$VIDEO_ENCODER" -crf "$CRF" -preset "$PRESET" \
             -c:a "$AUDIO_ENCODER" $METADATA_FLAGS \
-            -f mov - \
+            -f matroska - \
           | gpg --quiet --batch --yes --encrypt --recipient "$USER_GPG_RECIPIENT_ID" --trust-model always \
               --output "$FINAL_ENCRYPTED_FILENAME"
 
