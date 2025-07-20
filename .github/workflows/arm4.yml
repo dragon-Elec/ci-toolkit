@@ -1,9 +1,9 @@
-# .github/workflows/arm4.yml
+# .github/workflows/arm37.yml
 # =========================================================
 # MODIFIED: Tailored for the CI Toolkit client application.
 # =========================================================
 
-name: "Gen 4"
+name: "Gen 3.7"
 
 on:
   workflow_dispatch:
@@ -98,4 +98,50 @@ jobs:
           ACTION_GPG_PASSPHRASE: ${{ secrets.GPG_ACTION_PASSPHRASE }}
         run: |
           echo "-> Decrypting 'encrypted_input.gpg' to 'decrypted_video.mp4'..."
-          gpg --quiet --batch --yes --pinentry-mode loopback --decrypt --passphrase "$ACTION_GPG_PAS
+          gpg --quiet --batch --yes --pinentry-mode loopback --decrypt --passphrase "$ACTION_GPG_PASSPHRASE" \
+              --output decrypted_video.mp4 encrypted_input.gpg
+          echo "-> Decryption complete."
+
+      # ================================================================= #
+      # ===               MODIFIED LOGIC IS BELOW                     === #
+      # ================================================================= #
+
+      - name: "5. Compress Video using Client-Provided Command"
+        run: |
+          echo "-> Parsing FFmpeg command from client payload..."
+          # Extract the entire command string from the 'command' key in the JSON
+          COMMAND_STRING=$(echo '${{ github.event.inputs.ffmpeg_options }}' | jq -r '.command')
+
+          echo "-> Using command: $COMMAND_STRING"
+
+          # Define temporary and final filenames using the unique base name
+          TEMP_MP4="${{ github.event.inputs.output_filename_base }}.mp4"
+
+          echo "-> Encoding to temporary MP4: $TEMP_MP4"
+          
+          # The shell will correctly split the COMMAND_STRING into arguments for ffmpeg
+          ffmpeg -i decrypted_video.mp4 \
+            $COMMAND_STRING \
+            -movflags +faststart \
+            "$TEMP_MP4"
+
+      - name: "5A. Encrypt the Result"
+        run: |
+          TEMP_MP4="${{ github.event.inputs.output_filename_base }}.mp4"
+          FINAL_ENCRYPTED_FILENAME="${{ github.event.inputs.output_filename_base }}.gpg"
+          
+          echo "-> Encrypting $TEMP_MP4 -> $FINAL_ENCRYPTED_FILENAME for user"
+          gpg --quiet --batch --yes \
+              --encrypt --recipient "$USER_GPG_RECIPIENT_ID" --trust-model always \
+              --output "$FINAL_ENCRYPTED_FILENAME" \
+              "$TEMP_MP4"
+
+          # Clean up the unencrypted temporary file immediately after encryption
+          rm -f "$TEMP_MP4"
+
+      - name: "6. Upload Final Artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: compressed-output
+          path: ${{ github.event.inputs.output_filename_base }}.gpg
+          retention-days: 1
