@@ -3,7 +3,7 @@
 # MODIFIED: Tailored for the CI Toolkit client application.
 # =========================================================
 
-name: "Gen 4"
+name: "Gen 4exp"
 
 on:
   workflow_dispatch:
