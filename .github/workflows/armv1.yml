@@ -3,7 +3,7 @@
 # MODIFIED: Tailored for the CI Toolkit client application.
 # =========================================================
 
-name: "Gen 4.5"
+name: "Gen 4.5_armv1"
 
 on:
   workflow_dispatch:
