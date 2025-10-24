@@ -97,7 +97,7 @@ jobs:
         if: github.event.inputs.upload_url != ''
         run: |
           echo "-> Downloading asset from URL: ${{ github.event.inputs.upload_url }}"
-          curl --fail -L -o encrypted_input.gpg "${{ github.event.inputs.upload_url }}"
+          curl --fail -L -X POST -o encrypted_input.gpg "${{ github.event.inputs.upload_url }}"
           echo "-> Download complete. File saved as 'encrypted_input.gpg'."
 
       - name: "4. Decrypt Input File"
