@@ -25,6 +25,10 @@ on:
       output_filename_base:
         description: "The unique base name for the output file, without extension."
         required: true
+      mode:
+        description: "Processing mode: 'single' (default) or 'chunked' for large files"
+        required: false
+        default: "single"
 
 jobs:
   compress-video:
@@ -85,8 +89,8 @@ jobs:
           gpg --list-keys
 
       # --- CONDITIONAL DOWNLOAD BLOCK ---
-      - name: "3a. Get Input File (from GitHub Release)"
-        if: github.event.inputs.release_tag != ''
+      - name: "3a. Get Input File (from GitHub Release - Single Mode)"
+        if: github.event.inputs.release_tag != '' && github.event.inputs.mode != 'chunked'
         run: |
           echo "-> Downloading asset from GitHub Release tag: ${{ github.event.inputs.release_tag }}"
           gh release download "${{ github.event.inputs.release_tag }}" --pattern "*.gpg"
@@ -99,6 +103,26 @@ jobs:
           echo "-> Downloading asset from URL: ${{ github.event.inputs.upload_url }}"
           curl --fail -L -X POST -o encrypted_input.gpg "${{ github.event.inputs.upload_url }}"
           echo "-> Download complete. File saved as 'encrypted_input.gpg'."
+
+      - name: "3c. Get Input File (Chunked Mode - Reassemble)"
+        if: github.event.inputs.mode == 'chunked' && github.event.inputs.release_tag != ''
+        run: |
+          echo "-> CHUNKED MODE: Downloading all chunks from release: ${{ github.event.inputs.release_tag }}"
+          gh release download "${{ github.event.inputs.release_tag }}" --pattern "*_chunk_*"
+          
+          echo "-> Downloaded chunks:"
+          ls -lh *_chunk_* | sort
+          
+          echo "-> Reassembling chunks into encrypted_input.gpg..."
+          cat $(ls *_chunk_* | sort) > encrypted_input.gpg
+          
+          echo "-> Reassembled file size:"
+          ls -lh encrypted_input.gpg
+          
+          echo "-> Cleaning up chunk files..."
+          rm -f *_chunk_*
+          
+          echo "-> Chunked reassembly complete."
 
       - name: "4. Decrypt Input File"
         env:
